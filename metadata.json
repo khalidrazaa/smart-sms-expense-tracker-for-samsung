@@ -1,0 +1,6 @@
+{
+  "name": "Smart SMS Expense Tracker for Samsung",
+  "description": "Mobile expense and earnings tracker tailored for Samsung Android. Reads and parses bank SMS transactions, tracks debit and credit balances, and logs cash spendings.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
