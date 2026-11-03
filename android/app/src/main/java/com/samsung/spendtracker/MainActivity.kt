@@ -29,6 +29,7 @@ import androidx.core.content.ContextCompat
 import com.samsung.spendtracker.data.*
 import com.samsung.spendtracker.ui.FinancialUiState
 import com.samsung.spendtracker.ui.SpendTrackerViewModel
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -388,7 +389,7 @@ fun BalanceSummaryCard(uiState: FinancialUiState) {
             )
 
             Spacer(modifier = Modifier.height(12.dp))
-            Divider(color = Color(0xFF1E293B))
+            HorizontalDivider(color = Color(0xFF1E293B))
             Spacer(modifier = Modifier.height(12.dp))
 
             Row(

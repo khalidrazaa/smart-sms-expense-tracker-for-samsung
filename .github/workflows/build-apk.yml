@@ -41,7 +41,13 @@ jobs:
       - name: Build Production Release and Debug APKs
         run: |
           cd android
-          gradle assembleRelease assembleDebug --stacktrace
+          gradle wrapper --gradle-version 8.10.2 || true
+          chmod +x ./gradlew || true
+          if [ -f "./gradlew" ]; then
+            ./gradlew assembleRelease assembleDebug --stacktrace
+          else
+            gradle assembleRelease assembleDebug --stacktrace
+          fi
 
       # Prepare clean, descriptive filenames for download
       - name: Prepare APK and Keystore Artifacts

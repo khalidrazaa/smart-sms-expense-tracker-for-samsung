@@ -36,7 +36,7 @@ class SmsReceiver : BroadcastReceiver() {
         val transaction = SmsParser.parse(fullBody, timestamp) ?: return
 
         // Save automatically to Room SQLite database in the background
-        val db = SpendTrackerApp.instance.database
+        val db = com.samsung.spendtracker.data.AppDatabase.getDatabase(context)
         CoroutineScope(Dispatchers.IO).launch {
             // Deduplication check
             if (transaction.referenceId != null) {

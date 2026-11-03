@@ -77,10 +77,9 @@ class SpendTrackerViewModel(
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             var addedCount = 0
             val uri = android.provider.Telephony.Sms.Inbox.CONTENT_URI
-            val projection = arrayOf(
-                android.provider.Telephony.Sms.Inbox.BODY,
-                android.provider.Telephony.Sms.Inbox.DATE
-            )
+            val colBody = "body"
+            val colDate = "date"
+            val projection = arrayOf(colBody, colDate)
 
             try {
                 val cursor = context.contentResolver.query(
@@ -88,12 +87,12 @@ class SpendTrackerViewModel(
                     projection,
                     null,
                     null,
-                    "${android.provider.Telephony.Sms.Inbox.DATE} DESC LIMIT 300"
+                    "$colDate DESC LIMIT 300"
                 )
 
                 cursor?.use { c ->
-                    val bodyIndex = c.getColumnIndex(android.provider.Telephony.Sms.Inbox.BODY)
-                    val dateIndex = c.getColumnIndex(android.provider.Telephony.Sms.Inbox.DATE)
+                    val bodyIndex = c.getColumnIndex(colBody)
+                    val dateIndex = c.getColumnIndex(colDate)
 
                     while (c.moveToNext()) {
                         val body = if (bodyIndex >= 0) c.getString(bodyIndex) else null
