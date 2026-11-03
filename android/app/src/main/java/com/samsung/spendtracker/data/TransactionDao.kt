@@ -26,6 +26,9 @@ interface TransactionDao {
     @Query("SELECT COUNT(*) FROM transactions WHERE referenceId = :refId AND referenceId IS NOT NULL")
     suspend fun countByReferenceId(refId: String): Int
 
+    @Query("SELECT COUNT(*) FROM transactions WHERE rawSms = :rawSms")
+    suspend fun countByRawSms(rawSms: String): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertTransaction(transaction: TransactionEntity): Long
 

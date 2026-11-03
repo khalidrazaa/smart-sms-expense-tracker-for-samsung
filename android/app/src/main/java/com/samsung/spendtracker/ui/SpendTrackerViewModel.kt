@@ -61,6 +61,69 @@ class SpendTrackerViewModel(
         }
     }
 
+    fun parseAndAddSms(smsText: String, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val parsed = com.samsung.spendtracker.receiver.SmsParser.parse(smsText)
+            if (parsed != null) {
+                dao.insertTransaction(parsed)
+                onResult(true)
+            } else {
+                onResult(false)
+            }
+        }
+    }
+
+    fun scanInbox(context: android.content.Context, onComplete: (Int) -> Unit) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            var addedCount = 0
+            val uri = android.provider.Telephony.Sms.Inbox.CONTENT_URI
+            val projection = arrayOf(
+                android.provider.Telephony.Sms.Inbox.BODY,
+                android.provider.Telephony.Sms.Inbox.DATE
+            )
+
+            try {
+                val cursor = context.contentResolver.query(
+                    uri,
+                    projection,
+                    null,
+                    null,
+                    "${android.provider.Telephony.Sms.Inbox.DATE} DESC LIMIT 300"
+                )
+
+                cursor?.use { c ->
+                    val bodyIndex = c.getColumnIndex(android.provider.Telephony.Sms.Inbox.BODY)
+                    val dateIndex = c.getColumnIndex(android.provider.Telephony.Sms.Inbox.DATE)
+
+                    while (c.moveToNext()) {
+                        val body = if (bodyIndex >= 0) c.getString(bodyIndex) else null
+                        val date = if (dateIndex >= 0) c.getLong(dateIndex) else System.currentTimeMillis()
+
+                        if (!body.isNullOrBlank()) {
+                            val parsed = com.samsung.spendtracker.receiver.SmsParser.parse(body, date)
+                            if (parsed != null) {
+                                // Check if already inserted
+                                val refExists = parsed.referenceId?.let { dao.countByReferenceId(it) > 0 } ?: false
+                                val smsExists = dao.countByRawSms(body) > 0
+
+                                if (!refExists && !smsExists) {
+                                    dao.insertTransaction(parsed)
+                                    addedCount++
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                onComplete(addedCount)
+            }
+        }
+    }
+
     fun deleteTransaction(transaction: TransactionEntity) {
         viewModelScope.launch {
             dao.deleteTransaction(transaction)

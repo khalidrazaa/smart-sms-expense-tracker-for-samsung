@@ -87,8 +87,13 @@ fun MainScreen(viewModel: SpendTrackerViewModel) {
     }
 
     var showAddDialog by remember { mutableStateOf(false) }
+    var showPasteSmsDialog by remember { mutableStateOf(false) }
+    var isScanning by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val coroutineScope = rememberCoroutineScope()
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -118,6 +123,52 @@ fun MainScreen(viewModel: SpendTrackerViewModel) {
                             fontSize = 11.sp,
                             color = if (hasSmsPermission) Color(0xFF10B981) else Color(0xFFF43F5E)
                         )
+                    }
+                },
+                actions = {
+                    // Paste SMS Button
+                    IconButton(onClick = { showPasteSmsDialog = true }) {
+                        Icon(
+                            imageVector = Icons.Default.Email,
+                            contentDescription = "Paste SMS",
+                            tint = Color(0xFF38BDF8)
+                        )
+                    }
+
+                    // Scan Inbox Button
+                    IconButton(
+                        onClick = {
+                            if (!hasSmsPermission) {
+                                permissionLauncher.launch(arrayOf(Manifest.permission.RECEIVE_SMS, Manifest.permission.READ_SMS))
+                            } else {
+                                isScanning = true
+                                viewModel.scanInbox(context) { count ->
+                                    isScanning = false
+                                    coroutineScope.launch {
+                                        if (count > 0) {
+                                            snackbarHostState.showSnackbar("Found and imported $count bank transaction(s)!")
+                                        } else {
+                                            snackbarHostState.showSnackbar("Scan complete. No new bank SMS found.")
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        enabled = !isScanning
+                    ) {
+                        if (isScanning) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                color = Color(0xFF38BDF8),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Scan SMS Inbox",
+                                tint = Color.White
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -175,7 +226,67 @@ fun MainScreen(viewModel: SpendTrackerViewModel) {
             // Summary Card
             BalanceSummaryCard(uiState)
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Quick Actions: Scan Inbox & Paste SMS
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        if (!hasSmsPermission) {
+                            permissionLauncher.launch(arrayOf(Manifest.permission.RECEIVE_SMS, Manifest.permission.READ_SMS))
+                        } else {
+                            isScanning = true
+                            viewModel.scanInbox(context) { count ->
+                                isScanning = false
+                                coroutineScope.launch {
+                                    if (count > 0) {
+                                        snackbarHostState.showSnackbar("Found and imported $count bank transaction(s)!")
+                                    } else {
+                                        snackbarHostState.showSnackbar("Scan complete. No new bank SMS found.")
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = Color(0xFF38BDF8)
+                    ),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    if (isScanning) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            color = Color(0xFF38BDF8),
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Scanning...", fontSize = 12.sp)
+                    } else {
+                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Scan Inbox", fontSize = 12.sp)
+                    }
+                }
+
+                OutlinedButton(
+                    onClick = { showPasteSmsDialog = true },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = Color(0xFFA78BFA)
+                    ),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Default.Email, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Paste SMS", fontSize = 12.sp)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
 
             // Section Header
             Row(
@@ -205,10 +316,11 @@ fun MainScreen(viewModel: SpendTrackerViewModel) {
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "No transactions yet.\nIncoming bank SMS will appear here automatically,\nor tap (+) to add a cash spend.",
+                        text = "No transactions recorded yet.\n\n📱 Main Phone: New bank SMS are tracked automatically in the background!\n\n🔒 Secure Folder: Tap 'Scan Inbox' above or 'Paste SMS' to import transactions.\n\n💵 Tap (+) to record cash spending.",
                         fontSize = 13.sp,
                         color = Color(0xFF64748B),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        lineHeight = 20.sp
                     )
                 }
             } else {
@@ -230,6 +342,24 @@ fun MainScreen(viewModel: SpendTrackerViewModel) {
             onAdd = { amount, type, vendor, category, comment ->
                 viewModel.addManualTransaction(amount, type, vendor, category, comment)
                 showAddDialog = false
+            }
+        )
+    }
+
+    if (showPasteSmsDialog) {
+        PasteSmsDialog(
+            onDismiss = { showPasteSmsDialog = false },
+            onParse = { text ->
+                viewModel.parseAndAddSms(text) { success ->
+                    coroutineScope.launch {
+                        if (success) {
+                            snackbarHostState.showSnackbar("SMS parsed and transaction added successfully!")
+                        } else {
+                            snackbarHostState.showSnackbar("Could not detect bank transaction. Try manual entry.")
+                        }
+                    }
+                }
+                showPasteSmsDialog = false
             }
         )
     }
@@ -445,3 +575,52 @@ fun AddCashDialog(
         }
     )
 }
+
+@Composable
+fun PasteSmsDialog(
+    onDismiss: () -> Unit,
+    onParse: (String) -> Unit
+) {
+    var smsText by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Paste Bank SMS", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "Paste any bank SMS text (HDFC, SBI, ICICI, Axis, UPI, etc.). The app will automatically extract the amount, merchant, and debit/credit type.",
+                    fontSize = 12.sp,
+                    color = Color(0xFF94A3B8)
+                )
+
+                OutlinedTextField(
+                    value = smsText,
+                    onValueChange = { smsText = it },
+                    label = { Text("SMS Content") },
+                    placeholder = { Text("e.g. Paid Rs.450.00 to Swiggy on 03-Nov-24 via UPI Ref 4123456789. Avl Bal Rs.25,000") },
+                    modifier = Modifier.fillMaxWidth().height(140.dp),
+                    maxLines = 6
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (smsText.isNotBlank()) {
+                        onParse(smsText.trim())
+                    }
+                },
+                enabled = smsText.isNotBlank()
+            ) {
+                Text("Parse & Add")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
