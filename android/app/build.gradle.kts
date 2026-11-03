@@ -1,8 +1,22 @@
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("kotlin-kapt")
+}
+
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+} else {
+    val appPropFile = file("keystore.properties")
+    if (appPropFile.exists()) {
+        keystoreProperties.load(FileInputStream(appPropFile))
+    }
 }
 
 android {
@@ -19,9 +33,20 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        create("release") {
+            val keyFile = file("release.keystore")
+            storeFile = if (keyFile.exists()) keyFile else rootProject.file("keystore/release.keystore")
+            storePassword = keystoreProperties.getProperty("storePassword") ?: "spendtracker123"
+            keyAlias = keystoreProperties.getProperty("keyAlias") ?: "release_key"
+            keyPassword = keystoreProperties.getProperty("keyPassword") ?: "spendtracker123"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

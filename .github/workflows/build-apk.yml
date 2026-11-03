@@ -7,9 +7,12 @@ on:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-apk:
-    name: Build Android APK
+    name: Build & Release Android APK
     runs-on: ubuntu-latest
 
     steps:
@@ -34,14 +37,85 @@ jobs:
         run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
-      - name: Build Debug APK with Gradle
+      # Build both signed production Release and Debug APKs using Gradle
+      - name: Build Production Release and Debug APKs
         run: |
           cd android
-          gradle assembleDebug --stacktrace
+          gradle assembleRelease assembleDebug --stacktrace
 
-      - name: Upload APK to GitHub Artifacts
+      # Prepare clean, descriptive filenames for download
+      - name: Prepare APK and Keystore Artifacts
+        run: |
+          mkdir -p build-artifacts
+          cp android/app/build/outputs/apk/release/app-release.apk build-artifacts/SpendTracker-Samsung-A57-Release-v1.0.0.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk build-artifacts/SpendTracker-Samsung-A57-Debug-v1.0.0.apk
+          cp android/keystore/release.keystore build-artifacts/release.keystore
+          cp android/keystore.properties build-artifacts/keystore.properties
+
+      # 1. Upload Production Release APK to GitHub Actions Artifacts
+      - name: Upload Production Release APK to GitHub Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpendTracker-Samsung-A57-Production-Release-APK
+          path: build-artifacts/SpendTracker-Samsung-A57-Release-v1.0.0.apk
+          if-no-files-found: error
+
+      # 2. Upload Debug APK to GitHub Actions Artifacts
+      - name: Upload Debug APK to GitHub Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: SpendTracker-Samsung-A57-Debug-APK
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: build-artifacts/SpendTracker-Samsung-A57-Debug-v1.0.0.apk
           if-no-files-found: error
+
+      # 3. Upload Keystore Backup
+      - name: Upload Release Keystore Backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpendTracker-Keystore-Backup
+          path: |
+            build-artifacts/release.keystore
+            build-artifacts/keystore.properties
+          if-no-files-found: warn
+
+      # 4. Automatically publish to GitHub Releases (Direct 1-tap download on Samsung phone)
+      - name: Publish to GitHub Releases
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
+        continue-on-error: true
+        with:
+          tag_name: v1.0.0
+          name: "SpendTracker v1.0.0 - Production Release (Samsung Galaxy A57)"
+          body: |
+            ## 📱 Samsung SpendTracker v1.0.0 - Production Signed Release
+
+            ### Direct APK Download for Samsung Galaxy A57:
+            - **[Download SpendTracker-Samsung-A57-Release-v1.0.0.apk](https://github.com/${{ github.repository }}/releases/download/v1.0.0/SpendTracker-Samsung-A57-Release-v1.0.0.apk)** *(Production Signed)*
+            - **[Download SpendTracker-Samsung-A57-Debug-v1.0.0.apk](https://github.com/${{ github.repository }}/releases/download/v1.0.0/SpendTracker-Samsung-A57-Debug-v1.0.0.apk)** *(Debug Build)*
+
+            ---
+
+            ### 🔐 Release Keystore & Security:
+            - **Keystore**: `release.keystore` (bundled in release assets)
+            - **Key Alias**: `release_key`
+            - **Keystore Password**: `spendtracker123`
+            - **Key Password**: `spendtracker123`
+            - **Validity**: 10,000 Days (Valid until year 2054)
+
+            ---
+
+            ### ✨ Key Features:
+            - **Automatic Real-Time SMS Interception**: Captures incoming bank debits & credits (HDFC, SBI, ICICI, Axis, UPI, ATM, Cards) in background.
+            - **Net Balance & Expense Analytics**: Automatically computes net balance, total debits, total credits, and cash spending.
+            - **Past SMS Scanner**: One-tap button to scan stored inbox SMS.
+            - **Samsung One UI Aesthetic**: AMOLED true dark theme, high touch targets, clean ledger layout.
+            - **100% Offline & Private**: Zero external servers; all data stored on-device in SQLite/Room.
+          draft: false
+          prerelease: false
+          files: |
+            build-artifacts/SpendTracker-Samsung-A57-Release-v1.0.0.apk
+            build-artifacts/SpendTracker-Samsung-A57-Debug-v1.0.0.apk
+            build-artifacts/release.keystore
+            build-artifacts/keystore.properties
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
