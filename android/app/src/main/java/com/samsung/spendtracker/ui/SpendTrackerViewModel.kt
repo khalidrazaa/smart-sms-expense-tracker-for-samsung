@@ -129,9 +129,92 @@ class SpendTrackerViewModel(
         }
     }
 
-    fun clearAll() {
+    fun clearAllTransactions() {
         viewModelScope.launch {
             dao.clearAll()
+        }
+    }
+
+    fun resetToSampleData() {
+        viewModelScope.launch {
+            dao.clearAll()
+            val now = System.currentTimeMillis()
+            val dayMs = 86_400_000L
+            val samples = listOf(
+                TransactionEntity(
+                    amount = 54000.0,
+                    type = TransactionType.CREDIT,
+                    vendor = "TechCorp Solutions (Salary)",
+                    comment = "Monthly Salary Deposit Nov 2024",
+                    category = "Salary",
+                    paymentMode = PaymentMode.SMS,
+                    accountDetails = "HDFC Bank XX4012",
+                    timestamp = now - (dayMs * 2)
+                ),
+                TransactionEntity(
+                    amount = 450.0,
+                    type = TransactionType.DEBIT,
+                    vendor = "Swiggy Online Food",
+                    comment = "Dinner delivery",
+                    category = "Food & Dining",
+                    paymentMode = PaymentMode.UPI,
+                    accountDetails = "HDFC Bank XX4012",
+                    timestamp = now - (dayMs * 3)
+                ),
+                TransactionEntity(
+                    amount = 1200.0,
+                    type = TransactionType.DEBIT,
+                    vendor = "Local Grocery Store",
+                    comment = "Weekly vegetables & fruits",
+                    category = "Groceries",
+                    paymentMode = PaymentMode.CASH,
+                    accountDetails = "Cash in Hand",
+                    timestamp = now - (dayMs * 4)
+                ),
+                TransactionEntity(
+                    amount = 2499.0,
+                    type = TransactionType.DEBIT,
+                    vendor = "Amazon India",
+                    comment = "Wireless earphones",
+                    category = "Shopping",
+                    paymentMode = PaymentMode.SMS,
+                    accountDetails = "ICICI Bank XX8901",
+                    timestamp = now - (dayMs * 8)
+                ),
+                TransactionEntity(
+                    amount = 54000.0,
+                    type = TransactionType.CREDIT,
+                    vendor = "TechCorp Solutions (Salary)",
+                    comment = "Monthly Salary Deposit Oct 2024",
+                    category = "Salary",
+                    paymentMode = PaymentMode.SMS,
+                    accountDetails = "HDFC Bank XX4012",
+                    timestamp = now - (dayMs * 35)
+                ),
+                TransactionEntity(
+                    amount = 3100.0,
+                    type = TransactionType.DEBIT,
+                    vendor = "Electricity & Water Board",
+                    comment = "Monthly utility bill payment",
+                    category = "Bills & Utilities",
+                    paymentMode = PaymentMode.SMS,
+                    accountDetails = "HDFC Bank XX4012",
+                    timestamp = now - (dayMs * 38)
+                ),
+                TransactionEntity(
+                    amount = 850.0,
+                    type = TransactionType.DEBIT,
+                    vendor = "Cafe Coffee Day",
+                    comment = "Coffee with friends",
+                    category = "Food & Dining",
+                    paymentMode = PaymentMode.CASH,
+                    accountDetails = "Cash in Hand",
+                    timestamp = now - (dayMs * 42)
+                )
+            )
+            for (txn in samples) {
+                dao.insertTransaction(txn)
+            }
         }
     }
 }
