@@ -141,7 +141,7 @@ object SmsParser {
         }
 
         val vendor = extractVendor(smsBody, type)
-        val category = categorize(vendor, type)
+        val category = categorize(vendor, smsBody, type)
         val action = if (type == TransactionType.DEBIT) "Paid to" else "Received from"
         val comment = "$action $vendor" + (if (referenceId != null) " (Ref: $referenceId)" else "")
 
@@ -264,17 +264,17 @@ object SmsParser {
         return null
     }
 
-    private fun categorize(vendor: String, type: TransactionType): String {
-        val lower = vendor.lowercase()
+    private fun categorize(vendor: String, smsBody: String, type: TransactionType): String {
+        val lower = ("$vendor $smsBody").lowercase()
         return when {
-            type == TransactionType.CREDIT && (lower.contains("salary") || lower.contains("payroll")) -> "Salary & Income"
-            listOf("swiggy", "zomato", "mcdonalds", "starbucks", "dominos", "pizza", "kfc", "cafe", "restaurant", "food", "dining").any { lower.contains(it) } -> "Food & Dining"
-            listOf("supermarket", "grocery", "mart", "dmart", "bigbasket", "kirana", "provisions").any { lower.contains(it) } -> "Groceries"
-            listOf("amazon", "flipkart", "myntra", "ajio", "meesho", "zara", "retail", "store").any { lower.contains(it) } -> "Shopping"
-            listOf("uber", "ola", "rapido", "metro", "fuel", "petrol", "diesel", "shell", "toll", "fastag").any { lower.contains(it) } -> "Transport"
-            listOf("bill", "recharge", "airtel", "jio", "vi", "wifi", "broadband", "electricity").any { lower.contains(it) } -> "Bills & Utilities"
-            listOf("netflix", "spotify", "hotstar", "cinema", "movie", "pvr").any { lower.contains(it) } -> "Entertainment"
-            listOf("pharmacy", "apollo", "hospital", "clinic", "doctor").any { lower.contains(it) } -> "Health & Medical"
+            type == TransactionType.CREDIT && (lower.contains("salary") || lower.contains("payroll") || lower.contains("stipend")) -> "Salary & Income"
+            listOf("swiggy", "zomato", "mcdonald", "starbucks", "domino", "pizza", "kfc", "burger", "cafe", "restaurant", "food", "dining", "eatery", "bakery", "tea", "coffee").any { lower.contains(it) } -> "Food & Dining"
+            listOf("supermarket", "grocery", "groceries", "mart", "dmart", "bigbasket", "blinkit", "zepto", "instamart", "kirana", "provisions", "vegetables", "fruits", "milk").any { lower.contains(it) } -> "Groceries"
+            listOf("amazon", "flipkart", "myntra", "ajio", "meesho", "nykaa", "zara", "h&m", "retail", "clothing", "shopping", "store").any { lower.contains(it) } -> "Shopping"
+            listOf("uber", "ola", "rapido", "metro", "fuel", "petrol", "diesel", "shell", "hpcl", "iocl", "bpcl", "toll", "fastag", "parking").any { lower.contains(it) } -> "Transport"
+            listOf("bescom", "electricity", "water", "gas", "bill", "recharge", "airtel", "jio", "vi", "wifi", "broadband", "dth").any { lower.contains(it) } -> "Bills & Utilities"
+            listOf("netflix", "spotify", "hotstar", "prime video", "cinema", "movie", "pvr", "inox", "bookmyshow").any { lower.contains(it) } -> "Entertainment"
+            listOf("pharmacy", "apollo", "medplus", "1mg", "pharmeasy", "hospital", "clinic", "doctor", "lab").any { lower.contains(it) } -> "Health & Medical"
             listOf("atm", "cash wdl", "cash withdrawal").any { lower.contains(it) } -> "Cash & ATM"
             type == TransactionType.CREDIT -> "Salary & Income"
             else -> "Other"

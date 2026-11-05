@@ -61,21 +61,50 @@ class SpendTrackerViewModel(
         }
     }
 
-    fun parseAndAddSms(smsText: String, onResult: (Boolean) -> Unit) {
+    fun parseAndAddSms(smsText: String, onResult: (Boolean, String?) -> Unit) {
         viewModelScope.launch {
             val parsed = com.samsung.spendtracker.receiver.SmsParser.parse(smsText)
             if (parsed != null) {
+                // 1. Reference ID check
+                if (parsed.referenceId != null && dao.countByReferenceId(parsed.referenceId) > 0) {
+                    onResult(false, "Duplicate reference ID detected: already logged.")
+                    return@launch
+                }
+                // 2. Exact raw SMS check
+                if (dao.countByRawSms(smsText) > 0) {
+                    onResult(false, "Exact duplicate SMS already recorded.")
+                    return@launch
+                }
+                // 3. 3-Minute Temporal Sliding Window Check (catches identical amount + type within 180s)
+                val recentDup = dao.findRecentDuplicate(
+                    type = parsed.type,
+                    amount = parsed.amount,
+                    timestamp = parsed.timestamp,
+                    windowMs = 180_000L
+                )
+                if (recentDup != null) {
+                    // Enrich existing transaction if new SMS has reference ID
+                    if (recentDup.referenceId == null && parsed.referenceId != null) {
+                        dao.updateTransaction(recentDup.copy(referenceId = parsed.referenceId))
+                        onResult(true, "Duplicate SMS within 3m merged with existing transaction (Ref ID enriched).")
+                    } else {
+                        onResult(false, "Duplicate suppressed: identical ${parsed.type.name} of ₹${parsed.amount} was already logged within 3 minutes.")
+                    }
+                    return@launch
+                }
+
                 dao.insertTransaction(parsed)
-                onResult(true)
+                onResult(true, null)
             } else {
-                onResult(false)
+                onResult(false, "SMS does not contain an eligible debit/credit transaction.")
             }
         }
     }
 
-    fun scanInbox(context: android.content.Context, onComplete: (Int) -> Unit) {
+    fun scanInbox(context: android.content.Context, onComplete: (addedCount: Int, duplicateCount: Int) -> Unit) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             var addedCount = 0
+            var duplicateCount = 0
             val uri = android.provider.Telephony.Sms.Inbox.CONTENT_URI
             val colBody = "body"
             val colDate = "date"
@@ -101,13 +130,26 @@ class SpendTrackerViewModel(
                         if (!body.isNullOrBlank()) {
                             val parsed = com.samsung.spendtracker.receiver.SmsParser.parse(body, date)
                             if (parsed != null) {
-                                // Check if already inserted
+                                // Check if already inserted via Ref ID or Raw SMS
                                 val refExists = parsed.referenceId?.let { dao.countByReferenceId(it) > 0 } ?: false
                                 val smsExists = dao.countByRawSms(body) > 0
 
-                                if (!refExists && !smsExists) {
+                                // Check 3-minute sliding window
+                                val recentDup = dao.findRecentDuplicate(
+                                    type = parsed.type,
+                                    amount = parsed.amount,
+                                    timestamp = parsed.timestamp,
+                                    windowMs = 180_000L
+                                )
+
+                                if (!refExists && !smsExists && recentDup == null) {
                                     dao.insertTransaction(parsed)
                                     addedCount++
+                                } else {
+                                    duplicateCount++
+                                    if (recentDup != null && recentDup.referenceId == null && parsed.referenceId != null) {
+                                        dao.updateTransaction(recentDup.copy(referenceId = parsed.referenceId))
+                                    }
                                 }
                             }
                         }
@@ -118,7 +160,7 @@ class SpendTrackerViewModel(
             }
 
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                onComplete(addedCount)
+                onComplete(addedCount, duplicateCount)
             }
         }
     }

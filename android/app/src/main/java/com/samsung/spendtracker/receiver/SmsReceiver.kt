@@ -38,13 +38,40 @@ class SmsReceiver : BroadcastReceiver() {
         // Save automatically to Room SQLite database in the background
         val db = com.samsung.spendtracker.data.AppDatabase.getDatabase(context)
         CoroutineScope(Dispatchers.IO).launch {
-            // Deduplication check
+            val dao = db.transactionDao()
+
+            // 1. Reference ID deduplication check
             if (transaction.referenceId != null) {
-                val exists = db.transactionDao().countByReferenceId(transaction.referenceId)
+                val exists = dao.countByReferenceId(transaction.referenceId)
                 if (exists > 0) return@launch
             }
 
-            db.transactionDao().insertTransaction(transaction)
+            // 2. Exact Raw SMS text deduplication check
+            val rawExists = dao.countByRawSms(fullBody)
+            if (rawExists > 0) return@launch
+
+            // 3. Temporal deduplication window (catches 2-3 duplicate SMS arriving within 3 minutes)
+            val recentDuplicate = dao.findRecentDuplicate(
+                type = transaction.type,
+                amount = transaction.amount,
+                timestamp = transaction.timestamp,
+                windowMs = 180_000L // 3 minutes window
+            )
+
+            if (recentDuplicate != null) {
+                // If the follow-up SMS contains a reference ID that the first missed, enrich it
+                if (recentDuplicate.referenceId == null && transaction.referenceId != null) {
+                    val enriched = recentDuplicate.copy(
+                        referenceId = transaction.referenceId,
+                        accountDetails = transaction.accountDetails ?: recentDuplicate.accountDetails
+                    )
+                    dao.updateTransaction(enriched)
+                }
+                // Duplicate suppressed - prevents multiple entries
+                return@launch
+            }
+
+            dao.insertTransaction(transaction)
 
             // Show real-time notification on Samsung device
             showNotification(context, transaction.type, transaction.amount, transaction.vendor)

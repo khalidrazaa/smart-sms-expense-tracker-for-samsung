@@ -1,6 +1,7 @@
 package com.samsung.spendtracker
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -102,6 +103,13 @@ fun MainScreen(viewModel: SpendTrackerViewModel) {
         topBar = {
             TopAppBar(
                 title = {
+                    val deviceModel = remember {
+                        val manufacturer = Build.MANUFACTURER.replaceFirstChar {
+                            if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString()
+                        }
+                        val model = Build.MODEL
+                        if (model.startsWith(manufacturer, ignoreCase = true)) model else "$manufacturer $model"
+                    }
                     Column {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
@@ -115,7 +123,7 @@ fun MainScreen(viewModel: SpendTrackerViewModel) {
                                 shape = RoundedCornerShape(4.dp)
                             ) {
                                 Text(
-                                    text = "Samsung A57",
+                                    text = deviceModel.ifBlank { "Samsung A57" },
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = Color(0xFF38BDF8),
@@ -147,13 +155,15 @@ fun MainScreen(viewModel: SpendTrackerViewModel) {
                                 permissionLauncher.launch(arrayOf(Manifest.permission.RECEIVE_SMS, Manifest.permission.READ_SMS))
                             } else {
                                 isScanning = true
-                                viewModel.scanInbox(context) { count ->
+                                viewModel.scanInbox(context) { added, dups ->
                                     isScanning = false
                                     coroutineScope.launch {
-                                        if (count > 0) {
-                                            snackbarHostState.showSnackbar("Found and imported $count bank transaction(s)!")
+                                        if (added > 0) {
+                                            val dupInfo = if (dups > 0) " ($dups duplicate alert(s) filtered)" else ""
+                                            snackbarHostState.showSnackbar("Found and imported $added bank transaction(s)$dupInfo!")
                                         } else {
-                                            snackbarHostState.showSnackbar("Scan complete. No new bank SMS found.")
+                                            val dupInfo = if (dups > 0) " ($dups duplicate alert(s) suppressed)" else ""
+                                            snackbarHostState.showSnackbar("Scan complete. No new bank SMS found$dupInfo.")
                                         }
                                     }
                                 }
@@ -284,13 +294,15 @@ fun MainScreen(viewModel: SpendTrackerViewModel) {
                         },
                         onScanInbox = {
                             isScanning = true
-                            viewModel.scanInbox(context) { count ->
+                            viewModel.scanInbox(context) { added, dups ->
                                 isScanning = false
                                 coroutineScope.launch {
-                                    if (count > 0) {
-                                        snackbarHostState.showSnackbar("Found and imported $count bank transaction(s)!")
+                                    if (added > 0) {
+                                        val dupInfo = if (dups > 0) " ($dups duplicate alert(s) filtered)" else ""
+                                        snackbarHostState.showSnackbar("Found and imported $added bank transaction(s)$dupInfo!")
                                     } else {
-                                        snackbarHostState.showSnackbar("Scan complete. No new bank SMS found.")
+                                        val dupInfo = if (dups > 0) " ($dups duplicate alert(s) suppressed)" else ""
+                                        snackbarHostState.showSnackbar("Scan complete. No new bank SMS found$dupInfo.")
                                     }
                                 }
                             }
@@ -332,12 +344,12 @@ fun MainScreen(viewModel: SpendTrackerViewModel) {
         PasteSmsDialog(
             onDismiss = { showPasteSmsDialog = false },
             onParse = { text ->
-                viewModel.parseAndAddSms(text) { success ->
+                viewModel.parseAndAddSms(text) { success, msg ->
                     coroutineScope.launch {
                         if (success) {
-                            snackbarHostState.showSnackbar("SMS parsed and transaction added successfully!")
+                            snackbarHostState.showSnackbar(msg ?: "SMS parsed and transaction added successfully!")
                         } else {
-                            snackbarHostState.showSnackbar("Could not detect bank transaction. Try manual entry.")
+                            snackbarHostState.showSnackbar(msg ?: "Could not detect bank transaction. Try manual entry.")
                         }
                     }
                 }
@@ -623,6 +635,7 @@ fun MonthHeaderRow(
 fun TransactionRow(txn: TransactionEntity, onDelete: () -> Unit) {
     val isDebit = txn.type == TransactionType.DEBIT
     val dateStr = SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(txn.timestamp))
+    var showDeleteConfirm by remember { mutableStateOf(false) }
 
     Card(
         shape = RoundedCornerShape(12.dp),
@@ -673,21 +686,68 @@ fun TransactionRow(txn: TransactionEntity, onDelete: () -> Unit) {
                 )
             }
 
-            Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    text = "${if (isDebit) "-" else "+"}₹${String.format("%,.2f", txn.amount)}",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp,
-                    color = if (isDebit) Color(0xFFFB7185) else Color(0xFF34D399)
-                )
-                Text(
-                    text = if (isDebit) "DEBIT" else "CREDIT",
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFF64748B)
-                )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = "${if (isDebit) "-" else "+"}₹${String.format("%,.2f", txn.amount)}",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = if (isDebit) Color(0xFFFB7185) else Color(0xFF34D399)
+                    )
+                    Text(
+                        text = if (isDebit) "DEBIT" else "CREDIT",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF64748B)
+                    )
+                }
+
+                IconButton(
+                    onClick = { showDeleteConfirm = true },
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "Delete Transaction",
+                        tint = Color(0xFF94A3B8),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
         }
+    }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("Delete Transaction?", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+            text = {
+                Text(
+                    "Are you sure you want to remove this ${if (isDebit) "expense" else "income"} of ₹${String.format("%,.2f", txn.amount)} for ${txn.vendor} from your ledger?",
+                    fontSize = 13.sp,
+                    color = Color(0xFFCBD5E1)
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDeleteConfirm = false
+                        onDelete()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
+                ) {
+                    Text("Delete", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text("Cancel", color = Color(0xFF94A3B8))
+                }
+            }
+        )
     }
 }
 
@@ -897,10 +957,35 @@ fun LedgerView(
             }
         }
 
-        var selectedYear by remember { mutableStateOf("all") }
-        var selectedMonths by remember { mutableStateOf(setOf<Int>()) }
-
+        val context = LocalContext.current
+        val prefs = remember { context.getSharedPreferences("spendtracker_prefs", Context.MODE_PRIVATE) }
         val cal = remember { Calendar.getInstance() }
+        val currentYearStr = remember { cal.get(Calendar.YEAR).toString() }
+        val currentMonthInt = remember { cal.get(Calendar.MONTH) + 1 }
+
+        var selectedYear by remember {
+            mutableStateOf(prefs.getString("selected_year", currentYearStr) ?: currentYearStr)
+        }
+        var selectedMonths by remember {
+            val savedMonthStrings = prefs.getStringSet("selected_months", null)
+            val initial = if (savedMonthStrings != null) {
+                savedMonthStrings.mapNotNull { it.toIntOrNull() }.toSet()
+            } else {
+                setOf(currentMonthInt) // Default to current month instead of all months!
+            }
+            mutableStateOf(initial)
+        }
+
+        fun updateYear(year: String) {
+            selectedYear = year
+            prefs.edit().putString("selected_year", year).apply()
+        }
+
+        fun updateMonths(months: Set<Int>) {
+            selectedMonths = months
+            prefs.edit().putStringSet("selected_months", months.map { it.toString() }.toSet()).apply()
+        }
+
         val availableYears = remember(transactions) {
             val set = mutableSetOf<String>()
             for (txn in transactions) {
@@ -939,17 +1024,18 @@ fun LedgerView(
             totalCredits = filteredCredits,
             totalCashSpent = filteredCashSpent,
             selectedYear = selectedYear,
-            onYearSelected = { selectedYear = it },
+            onYearSelected = { updateYear(it) },
             availableYears = availableYears,
             selectedMonths = selectedMonths,
             onToggleMonth = { m ->
-                selectedMonths = if (selectedMonths.contains(m)) {
+                val newSet = if (selectedMonths.contains(m)) {
                     selectedMonths - m
                 } else {
                     selectedMonths + m
                 }
+                updateMonths(newSet)
             },
-            onSelectAllMonths = { selectedMonths = emptySet() }
+            onSelectAllMonths = { updateMonths(emptySet()) }
         )
 
         Spacer(modifier = Modifier.height(14.dp))
@@ -1036,50 +1122,268 @@ fun LedgerView(
     }
 }
 
+enum class ChannelFilter { ALL, UPI, CASH, ECOMMERCE }
+
+fun getTransactionChannel(txn: TransactionEntity): ChannelFilter {
+    if (txn.paymentMode == PaymentMode.CASH) return ChannelFilter.CASH
+    val text = "${txn.vendor} ${txn.comment ?: ""} ${txn.accountDetails ?: ""} ${txn.rawSms ?: ""}".lowercase()
+    if (txn.paymentMode == PaymentMode.UPI || txn.referenceId?.contains("upi", ignoreCase = true) == true ||
+        listOf("upi", "vpa", "gpay", "phonepe", "paytm", "cred").any { text.contains(it) }) {
+        return ChannelFilter.UPI
+    }
+    if (txn.paymentMode == PaymentMode.CARD ||
+        listOf("amazon", "flipkart", "myntra", "card", "pos", "ecommerce", "online", "netbanking").any { text.contains(it) }) {
+        return ChannelFilter.ECOMMERCE
+    }
+    if (listOf("swiggy", "zomato", "blinkit", "zepto").any { text.contains(it) }) {
+        return ChannelFilter.UPI
+    }
+    return ChannelFilter.ECOMMERCE
+}
+
 @Composable
 fun AnalyticsScreen(
     transactions: List<TransactionEntity>
 ) {
-    val totalCredits = remember(transactions) {
-        transactions.filter { it.type == TransactionType.CREDIT }.sumOf { it.amount }
+    val cal = remember { Calendar.getInstance() }
+    val currentYearStr = remember { cal.get(Calendar.YEAR).toString() }
+
+    var selectedYear by remember { mutableStateOf(currentYearStr) }
+    var selectedMonths by remember { mutableStateOf<Set<Int>>(emptySet()) } // emptySet = All Months Combined
+    var channelFilter by remember { mutableStateOf(ChannelFilter.ALL) }
+
+    val availableYears = remember(transactions) {
+        val set = mutableSetOf<String>()
+        for (txn in transactions) {
+            cal.timeInMillis = txn.timestamp
+            set.add(cal.get(Calendar.YEAR).toString())
+        }
+        set.sortedDescending()
     }
-    val totalDebits = remember(transactions) {
-        transactions.filter { it.type == TransactionType.DEBIT }.sumOf { it.amount }
+
+    val filteredTransactions = remember(transactions, selectedYear, selectedMonths) {
+        transactions.filter { txn ->
+            cal.timeInMillis = txn.timestamp
+            val yr = cal.get(Calendar.YEAR).toString()
+            val mo = cal.get(Calendar.MONTH) + 1
+            val matchesYear = selectedYear == "all" || yr == selectedYear
+            val matchesMonth = selectedMonths.isEmpty() || selectedMonths.contains(mo)
+            matchesYear && matchesMonth
+        }
     }
-    val cashSpent = remember(transactions) {
-        transactions.filter { it.type == TransactionType.DEBIT && it.paymentMode == PaymentMode.CASH }.sumOf { it.amount }
+
+    val totalCredits = remember(filteredTransactions) {
+        filteredTransactions.filter { it.type == TransactionType.CREDIT }.sumOf { it.amount }
     }
-    val bankSpent = (totalDebits - cashSpent).coerceAtLeast(0.0)
+    val totalDebits = remember(filteredTransactions) {
+        filteredTransactions.filter { it.type == TransactionType.DEBIT }.sumOf { it.amount }
+    }
+
+    // Channels calculations
+    val upiSpent = remember(filteredTransactions) {
+        filteredTransactions.filter { it.type == TransactionType.DEBIT && getTransactionChannel(it) == ChannelFilter.UPI }.sumOf { it.amount }
+    }
+    val upiCount = remember(filteredTransactions) {
+        filteredTransactions.count { it.type == TransactionType.DEBIT && getTransactionChannel(it) == ChannelFilter.UPI }
+    }
+    val cashSpent = remember(filteredTransactions) {
+        filteredTransactions.filter { it.type == TransactionType.DEBIT && getTransactionChannel(it) == ChannelFilter.CASH }.sumOf { it.amount }
+    }
+    val cashCount = remember(filteredTransactions) {
+        filteredTransactions.count { it.type == TransactionType.DEBIT && getTransactionChannel(it) == ChannelFilter.CASH }
+    }
+    val ecomSpent = remember(filteredTransactions) {
+        filteredTransactions.filter { it.type == TransactionType.DEBIT && getTransactionChannel(it) == ChannelFilter.ECOMMERCE }.sumOf { it.amount }
+    }
+    val ecomCount = remember(filteredTransactions) {
+        filteredTransactions.count { it.type == TransactionType.DEBIT && getTransactionChannel(it) == ChannelFilter.ECOMMERCE }
+    }
 
     val savingsRate = if (totalCredits > 0) {
         (((totalCredits - totalDebits) / totalCredits) * 100).toInt()
     } else 0
 
-    // Group debits by category
-    val categoryTotals = remember(transactions) {
-        val debits = transactions.filter { it.type == TransactionType.DEBIT }
+    // Group debits by category and channel
+    val categoryTotals = remember(filteredTransactions, channelFilter) {
+        val debits = filteredTransactions.filter { it.type == TransactionType.DEBIT }
         val sumTotal = debits.sumOf { it.amount }
-        val map = debits.groupBy { it.category }
-            .mapValues { entry -> entry.value.sumOf { it.amount } }
-            .toList()
-            .sortedByDescending { it.second }
-        map.map { (cat, amt) ->
-            val pct = if (sumTotal > 0) (amt / sumTotal * 100).toFloat() else 0f
-            Triple(cat, amt, pct)
-        }
+        val grouped = debits.groupBy { it.category }
+
+        grouped.mapNotNull { (category, txns) ->
+            val uAmt = txns.filter { getTransactionChannel(it) == ChannelFilter.UPI }.sumOf { it.amount }
+            val cAmt = txns.filter { getTransactionChannel(it) == ChannelFilter.CASH }.sumOf { it.amount }
+            val eAmt = txns.filter { getTransactionChannel(it) == ChannelFilter.ECOMMERCE }.sumOf { it.amount }
+
+            val displayAmt = when (channelFilter) {
+                ChannelFilter.ALL -> txns.sumOf { it.amount }
+                ChannelFilter.UPI -> uAmt
+                ChannelFilter.CASH -> cAmt
+                ChannelFilter.ECOMMERCE -> eAmt
+            }
+
+            if (displayAmt > 0) {
+                val pct = if (sumTotal > 0) (displayAmt / sumTotal * 100).toFloat() else 0f
+                CategoryAnalyticsItem(category, displayAmt, pct, uAmt, cAmt, eAmt, txns.size)
+            } else null
+        }.sortedByDescending { it.amount }
     }
 
     LazyColumn(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         modifier = Modifier.fillMaxSize()
     ) {
+        // Top Period Filter Card (Selectable Year, Month, All Months Combined)
         item {
-            Text(
-                text = "Analytics & Insights",
-                fontWeight = FontWeight.Bold,
-                fontSize = 18.sp,
-                color = Color.White
-            )
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF111827)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "ANALYTICS & INSIGHTS",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF94A3B8)
+                        )
+
+                        // Selectable Year Dropdown
+                        Box {
+                            var yearExpanded by remember { mutableStateOf(false) }
+                            Surface(
+                                color = Color(0xFF1E293B),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.clickable { yearExpanded = true }
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        text = if (selectedYear == "all") "All Years" else selectedYear,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                    Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = Color(0xFF94A3B8), modifier = Modifier.size(16.dp))
+                                }
+                            }
+                            DropdownMenu(
+                                expanded = yearExpanded,
+                                onDismissRequest = { yearExpanded = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("All Years") },
+                                    onClick = {
+                                        selectedYear = "all"
+                                        yearExpanded = false
+                                    }
+                                )
+                                availableYears.forEach { yr ->
+                                    DropdownMenuItem(
+                                        text = { Text(yr) },
+                                        onClick = {
+                                            selectedYear = yr
+                                            yearExpanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Months selection row with All Months Combined button
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            color = if (selectedMonths.isEmpty()) Color(0xFF0284C7) else Color(0xFF1E293B),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.clickable { selectedMonths = emptySet() }
+                        ) {
+                            Text(
+                                text = "All Months Combined",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (selectedMonths.isEmpty()) Color.White else Color(0xFF94A3B8),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+
+                        // Specific Month Dropdown
+                        Box {
+                            var monthExpanded by remember { mutableStateOf(false) }
+                            val monthNames = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+                            val label = when {
+                                selectedMonths.isEmpty() -> "Select Month"
+                                selectedMonths.size == 1 -> monthNames.getOrElse(selectedMonths.first() - 1) { "1 Month" }
+                                else -> "${selectedMonths.size} Months"
+                            }
+
+                            Surface(
+                                color = if (selectedMonths.isNotEmpty()) Color(0xFF0C4A6E) else Color(0xFF1E293B),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.clickable { monthExpanded = true }
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Icon(Icons.Default.DateRange, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(13.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = label,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (selectedMonths.isNotEmpty()) Color(0xFF38BDF8) else Color.White
+                                    )
+                                    Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = Color(0xFF94A3B8), modifier = Modifier.size(16.dp))
+                                }
+                            }
+
+                            DropdownMenu(
+                                expanded = monthExpanded,
+                                onDismissRequest = { monthExpanded = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("All Months Combined") },
+                                    onClick = {
+                                        selectedMonths = emptySet()
+                                        monthExpanded = false
+                                    }
+                                )
+                                HorizontalDivider()
+                                monthNames.forEachIndexed { idx, name ->
+                                    val mIdx = idx + 1
+                                    val isSelected = selectedMonths.contains(mIdx)
+                                    DropdownMenuItem(
+                                        text = {
+                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                                Text(name)
+                                                if (isSelected) {
+                                                    Icon(Icons.Default.Check, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(16.dp))
+                                                }
+                                            }
+                                        },
+                                        onClick = {
+                                            selectedMonths = if (isSelected) selectedMonths - mIdx else selectedMonths + mIdx
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // Financial Health Card
@@ -1144,59 +1448,78 @@ fun AnalyticsScreen(
             }
         }
 
-        // Cash vs Bank split
+        // PAYMENT CHANNELS: UPI, CASH, E-COMMERCE
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF111827)),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.AccountBalanceWallet, contentDescription = null, tint = Color(0xFFFBBF24), modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Cash Spending", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFFBBF24))
-                        }
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "₹${"%,.2f".format(cashSpent)}",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                        Text("Manual cash ledger", fontSize = 10.sp, color = Color(0xFF64748B))
-                    }
-                }
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "TRANSACTION CHANNELS",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF94A3B8)
+                )
 
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF111827)),
-                    modifier = Modifier.weight(1f)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.AccountBalance, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Bank SMS Spend", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF38BDF8))
+                    // UPI Card
+                    Card(
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (channelFilter == ChannelFilter.UPI) Color(0xFF3B0764) else Color(0xFF111827)
+                        ),
+                        modifier = Modifier.weight(1f).clickable {
+                            channelFilter = if (channelFilter == ChannelFilter.UPI) ChannelFilter.ALL else ChannelFilter.UPI
                         }
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "₹${"%,.2f".format(bankSpent)}",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                        Text("Auto-parsed SMS", fontSize = 10.sp, color = Color(0xFF64748B))
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Text("UPI", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFFC084FC))
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text("₹${"%,.0f".format(upiSpent)}", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            Text("$upiCount txns", fontSize = 9.sp, color = Color(0xFF94A3B8))
+                        }
+                    }
+
+                    // Cash Card
+                    Card(
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (channelFilter == ChannelFilter.CASH) Color(0xFF451A03) else Color(0xFF111827)
+                        ),
+                        modifier = Modifier.weight(1f).clickable {
+                            channelFilter = if (channelFilter == ChannelFilter.CASH) ChannelFilter.ALL else ChannelFilter.CASH
+                        }
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Text("CASH", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFBBF24))
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text("₹${"%,.0f".format(cashSpent)}", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            Text("$cashCount txns", fontSize = 9.sp, color = Color(0xFF94A3B8))
+                        }
+                    }
+
+                    // E-Commerce Card
+                    Card(
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (channelFilter == ChannelFilter.ECOMMERCE) Color(0xFF0C4A6E) else Color(0xFF111827)
+                        ),
+                        modifier = Modifier.weight(1f).clickable {
+                            channelFilter = if (channelFilter == ChannelFilter.ECOMMERCE) ChannelFilter.ALL else ChannelFilter.ECOMMERCE
+                        }
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Text("E-COMM", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8))
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text("₹${"%,.0f".format(ecomSpent)}", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            Text("$ecomCount txns", fontSize = 9.sp, color = Color(0xFF94A3B8))
+                        }
                     }
                 }
             }
         }
 
-        // Category breakdown card
+        // Category breakdown card with UPI, Cash, E-Commerce Sub-Breakdown
         item {
             Card(
                 shape = RoundedCornerShape(16.dp),
@@ -1204,37 +1527,85 @@ fun AnalyticsScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.PieChart, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text("SPENDING BY CATEGORY", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+
+                        // Channel filter pills
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Surface(
+                                color = if (channelFilter == ChannelFilter.ALL) Color(0xFF0284C7) else Color(0xFF1E293B),
+                                shape = RoundedCornerShape(6.dp),
+                                modifier = Modifier.clickable { channelFilter = ChannelFilter.ALL }
+                            ) {
+                                Text("All", fontSize = 9.sp, color = Color.White, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                            }
+                            Surface(
+                                color = if (channelFilter == ChannelFilter.UPI) Color(0xFF9333EA) else Color(0xFF1E293B),
+                                shape = RoundedCornerShape(6.dp),
+                                modifier = Modifier.clickable { channelFilter = ChannelFilter.UPI }
+                            ) {
+                                Text("UPI", fontSize = 9.sp, color = Color.White, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                            }
+                            Surface(
+                                color = if (channelFilter == ChannelFilter.CASH) Color(0xFFD97706) else Color(0xFF1E293B),
+                                shape = RoundedCornerShape(6.dp),
+                                modifier = Modifier.clickable { channelFilter = ChannelFilter.CASH }
+                            ) {
+                                Text("Cash", fontSize = 9.sp, color = Color.White, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                            }
+                            Surface(
+                                color = if (channelFilter == ChannelFilter.ECOMMERCE) Color(0xFF0284C7) else Color(0xFF1E293B),
+                                shape = RoundedCornerShape(6.dp),
+                                modifier = Modifier.clickable { channelFilter = ChannelFilter.ECOMMERCE }
+                            ) {
+                                Text("E-Comm", fontSize = 9.sp, color = Color.White, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                            }
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
 
                     if (categoryTotals.isEmpty()) {
-                        Text("No debit transactions to analyze yet.", fontSize = 12.sp, color = Color(0xFF64748B))
+                        Text("No debit transactions match this period and channel filter.", fontSize = 12.sp, color = Color(0xFF64748B))
                     } else {
-                        categoryTotals.forEach { (category, amount, pct) ->
-                            Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                        categoryTotals.forEach { item ->
+                            Column(modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Text(category, fontSize = 12.sp, color = Color(0xFFCBD5E1), fontWeight = FontWeight.Medium)
+                                    Text(item.category, fontSize = 12.sp, color = Color(0xFFCBD5E1), fontWeight = FontWeight.Medium)
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text("₹${"%,.2f".format(amount)}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                        Text("₹${"%,.2f".format(item.amount)}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
                                         Spacer(modifier = Modifier.width(8.dp))
-                                        Text("${pct.toInt()}%", fontSize = 10.sp, color = Color(0xFF94A3B8))
+                                        Text("${item.pct.toInt()}%", fontSize = 10.sp, color = Color(0xFF94A3B8))
                                     }
                                 }
                                 Spacer(modifier = Modifier.height(4.dp))
                                 LinearProgressIndicator(
-                                    progress = { pct / 100f },
+                                    progress = { item.pct / 100f },
                                     modifier = Modifier.fillMaxWidth().height(6.dp),
                                     color = Color(0xFF0284C7),
                                     trackColor = Color(0xFF1E293B)
                                 )
+
+                                // Channel Sub-Breakdown Tags
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    if (item.upi > 0) {
+                                        Text("UPI: ₹${"%,.0f".format(item.upi)}", fontSize = 9.sp, color = Color(0xFFC084FC))
+                                    }
+                                    if (item.cash > 0) {
+                                        Text("Cash: ₹${"%,.0f".format(item.cash)}", fontSize = 9.sp, color = Color(0xFFFBBF24))
+                                    }
+                                    if (item.ecom > 0) {
+                                        Text("E-Comm: ₹${"%,.0f".format(item.ecom)}", fontSize = 9.sp, color = Color(0xFF38BDF8))
+                                    }
+                                }
                             }
                         }
                     }
@@ -1243,6 +1614,16 @@ fun AnalyticsScreen(
         }
     }
 }
+
+data class CategoryAnalyticsItem(
+    val category: String,
+    val amount: Double,
+    val pct: Float,
+    val upi: Double,
+    val cash: Double,
+    val ecom: Double,
+    val count: Int
+)
 
 @Composable
 fun SmsSyncScreen(
@@ -1359,6 +1740,28 @@ fun SmsSyncScreen(
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                         lineHeight = 17.sp
                     )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Surface(
+                        color = Color(0xFF064E3B).copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(10.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Icon(Icons.Default.Check, contentDescription = null, tint = Color(0xFF34D399), modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "100% Read-Only Safety: SpendTracker never deletes, dismisses, or modifies your SMS messages or bank notifications. All texts stay permanently in Samsung Messages / Google Messages.",
+                                fontSize = 11.sp,
+                                color = Color(0xFFA7F3D0),
+                                lineHeight = 15.sp
+                            )
+                        }
+                    }
 
                     Spacer(modifier = Modifier.height(14.dp))
 
@@ -1873,6 +2276,37 @@ fun SettingsScreen(
                             Text("Alias: release_key", fontSize = 11.sp, color = Color(0xFF94A3B8))
                             Text("Password: spendtracker123", fontSize = 11.sp, color = Color(0xFF94A3B8))
                             Text("Validity: Valid until year 2054", fontSize = 11.sp, color = Color(0xFF10B981), fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Device Hardware (Dynamic Build Info) Card
+        item {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF111827)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.PhoneAndroid, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("DEVICE HARDWARE (READ DYNAMICALLY)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Surface(
+                        color = Color(0xFF0F172A),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("Model (Build.MODEL): ${Build.MODEL}", fontSize = 11.sp, color = Color.White)
+                            Text("Manufacturer: ${Build.MANUFACTURER}", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                            Text("Brand / Device: ${Build.BRAND} / ${Build.DEVICE}", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                            Text("Android OS: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})", fontSize = 11.sp, color = Color(0xFF34D399), fontWeight = FontWeight.SemiBold)
+                            Text("Banner Source: Dynamically read from android.os.Build", fontSize = 10.sp, color = Color(0xFF38BDF8))
                         }
                     }
                 }
